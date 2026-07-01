@@ -1,0 +1,3 @@
+[submodule "src/Dependency/fatfs"]
+	path = src/Dependency/fatfs
+	url = https://github.com/juliannojungle/fatfs.git
