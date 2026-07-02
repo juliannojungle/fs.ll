@@ -15,11 +15,3 @@ idf_component_register(
     INCLUDE_DIRS ${INCLUDE_DIRS}
     REQUIRES driver esp_system
 )
-
-# Disable -Werror for third-party dependencies (libpng, zlib) that produce
-# warnings with the xtensa toolchain under ESP-IDF's strict -Werror=all.
-# Using target_compile_options ensures -Wno-error comes after -Werror=all.
-target_compile_options(${COMPONENT_LIB} PRIVATE
-    -Wno-error=maybe-uninitialized
-    -Wno-error=unused-but-set-variable
-)
