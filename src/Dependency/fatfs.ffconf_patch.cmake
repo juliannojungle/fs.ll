@@ -4,6 +4,8 @@
 # Changes:
 #   FF_FS_RPATH:  0 -> 1  (enables f_chdrive/f_chdir for multi-drive support)
 #   FF_VOLUMES:   1 -> 2  (allows multiple logical drives)
+#   FF_CODE_PAGE: 932 -> 437  (US code page instead of Japanese)
+#   FF_USE_LFN:   0 -> 2  (enables long file names with stack buffer)
 
 set(FFCONF_PATH ${CMAKE_CURRENT_LIST_DIR}/fatfs/source/ffconf.h)
 
@@ -21,6 +23,22 @@ string(REGEX REPLACE
 # Match "#define FF_VOLUMES" followed by whitespace and "1"
 string(REGEX REPLACE
     "(#define FF_VOLUMES[^0-9]+)1"
+    "\\12"
+    FFCONF_CONTENT "${FFCONF_CONTENT}"
+)
+
+# FF_CODE_PAGE: 932 -> 437
+# Match "#define FF_CODE_PAGE" followed by whitespace and "932"
+string(REGEX REPLACE
+    "(#define FF_CODE_PAGE[^0-9]+)932"
+    "\\1437"
+    FFCONF_CONTENT "${FFCONF_CONTENT}"
+)
+
+# FF_USE_LFN: 0 -> 2
+# Match "#define FF_USE_LFN" followed by whitespace and "0"
+string(REGEX REPLACE
+    "(#define FF_USE_LFN[^0-9]+)0"
     "\\12"
     FFCONF_CONTENT "${FFCONF_CONTENT}"
 )

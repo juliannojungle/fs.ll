@@ -1,20 +1,22 @@
+if(NOT DEFINED PLATFORM_NAME)
+    set(PLATFORM_NAME "Simulator")
+endif()
 
-# Platform-agnostic translation units, shared by both targets. Platform-specific
-# sources (HAL.c, RTC.c, DiskIO.c) are added per-platform below.
-set(FSLL_COMMON_SRCS
-    ${CMAKE_CURRENT_LIST_DIR}/src/lib/FileSystem.c
+set(SOURCES
+    "${CMAKE_CURRENT_LIST_DIR}/src/lib/FileSystem.c"
+    "${CMAKE_CURRENT_LIST_DIR}/src/lib/Platform/${PLATFORM_NAME}/HAL.c"
+    "${CMAKE_CURRENT_LIST_DIR}/src/lib/Platform/${PLATFORM_NAME}/RTC.c"
+    "${CMAKE_CURRENT_LIST_DIR}/src/lib/Platform/${PLATFORM_NAME}/DiskIO.c"
+    "${CMAKE_CURRENT_LIST_DIR}/src/Dependency/fatfs/source/ff.c"
+    "${CMAKE_CURRENT_LIST_DIR}/src/Dependency/fatfs/source/ffsystem.c"
+    "${CMAKE_CURRENT_LIST_DIR}/src/Dependency/fatfs/source/ffunicode.c"
 )
 
-if(PLATFORM_NAME STREQUAL "ESP32")
-    # ESP-IDF orchestrates the build.
-    # EXTRA_COMPONENT_DIRS adds our component without losing ESP-IDF built-in components.
-    set(EXTRA_COMPONENT_DIRS
-        "${CMAKE_CURRENT_LIST_DIR}/src/lib/Platform/ESP32"
-    )
-elseif(PLATFORM_NAME STREQUAL "RP2040")
-    set(GUILL_RP2040_SRCS
-        ${GUILL_COMMON_SRCS}
-        ${CMAKE_CURRENT_LIST_DIR}/src/lib/Platform/RP2040/HAL.c
-        ${CMAKE_CURRENT_LIST_DIR}/src/lib/Platform/RP2040/RTC.c
-    )
-endif()
+set(INCLUDE_DIRS
+    "${CMAKE_CURRENT_LIST_DIR}/src/lib"
+    "${CMAKE_CURRENT_LIST_DIR}/src/lib/Platform/${PLATFORM_NAME}"
+    "${CMAKE_CURRENT_LIST_DIR}/src/Dependency/fatfs/source"
+)
+
+# Apply patch to ffconf.h (FF_FS_RPATH=1, FF_VOLUMES=2)
+include(${CMAKE_CURRENT_LIST_DIR}/src/Dependency/fatfs.ffconf_patch.cmake)

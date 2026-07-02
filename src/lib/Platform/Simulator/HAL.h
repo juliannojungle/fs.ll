@@ -2,10 +2,8 @@
 #define HAL_H
 
 #include <stdbool.h>
-#include "Types.h"
-#include "HALConfig.h"
 
-void Delay(UINT32 milliseconds);
+void Delay(unsigned int milliseconds);
 void STDIOInitAll(void);
 
 #endif /* HAL_H */

@@ -1,7 +1,6 @@
 #include "HAL.h"
 #include "RTC.h"
 #include "FileSystem.h"
-#include <stdlib.h>
 #include <stdio.h>
 
 void app_entry(void) {
@@ -11,13 +10,14 @@ void app_entry(void) {
 
     FIL file;
     if (MountSdCard() && SelectActiveDrive() && OpenFile(&file, "st_benedict.txt")) {
-        // print file content here
+        char buffer[1024];
+        UINT bytesRead;
+        f_read(&file, buffer, sizeof(buffer) - 1, &bytesRead);
+        buffer[bytesRead] = '\0';
+        printf("%s", buffer);
         CloseFile(&file);
     }
     UnMountSdCard();
-
-    while(true) {
-    }
 }
 
 #ifdef ESP_PLATFORM
