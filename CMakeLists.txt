@@ -8,7 +8,7 @@ endif()
 include(${CMAKE_SOURCE_DIR}/fs.ll.cmake)
 
 set(SOURCES
-    "${CMAKE_CURRENT_LIST_DIR}/src/Sample.c"
+    "${CMAKE_SOURCE_DIR}/src/Sample.c"
     ${SOURCES})
 
 # Build system per platform
@@ -30,7 +30,7 @@ elseif(PLATFORM_NAME STREQUAL "RP2040")
     if(NOT DEFINED PICO_SDK_PATH)
         set(PICO_SDK_PATH ~/pico-sdk)
     endif()
-    include(${CMAKE_CURRENT_LIST_DIR}/src/Dependency/pico_sdk_import.cmake)
+    include(${CMAKE_SOURCE_DIR}/src/Dependency/pico_sdk_import.cmake)
 
     pico_sdk_init()
     add_executable(${PROJECT_NAME} ${SOURCES})
