@@ -3,6 +3,7 @@ if(NOT DEFINED PLATFORM_NAME)
 endif()
 
 set(SOURCES
+    ${SOURCES}
     "${CMAKE_CURRENT_LIST_DIR}/src/lib/FileSystem.c"
     "${CMAKE_CURRENT_LIST_DIR}/src/lib/Platform/${PLATFORM_NAME}/HAL.c"
     "${CMAKE_CURRENT_LIST_DIR}/src/lib/Platform/${PLATFORM_NAME}/RTC.c"
@@ -13,6 +14,7 @@ set(SOURCES
 )
 
 set(INCLUDE_DIRS
+    ${INCLUDE_DIRS}
     "${CMAKE_CURRENT_LIST_DIR}/src/lib"
     "${CMAKE_CURRENT_LIST_DIR}/src/lib/Platform/${PLATFORM_NAME}"
     "${CMAKE_CURRENT_LIST_DIR}/src/Dependency/fatfs/source"
