@@ -22,10 +22,6 @@ elseif(PLATFORM_NAME STREQUAL "Simulator")
     add_executable(${PROJECT_NAME} ${SOURCES})
     include_directories(${INCLUDE_DIRS})
 
-    find_package(SDL2 REQUIRED)
-    include_directories(${SDL2_INCLUDE_DIRS})
-    target_link_libraries(${PROJECT_NAME} PUBLIC ${SDL2_LIBRARIES} m)
-
 elseif(PLATFORM_NAME STREQUAL "RP2040")
     set(CMAKE_C_STANDARD 11)
     set(CMAKE_CXX_STANDARD 14)
