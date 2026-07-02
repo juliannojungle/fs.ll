@@ -2,12 +2,14 @@ cmake_minimum_required(VERSION 3.16)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON) # Generate compile_commands.json (consumed by clangd for code intelligence)
 
 set(PROJECT_NAME "fs.ll")
+if(NOT PLATFORM_NAME STREQUAL "ESP32")
+    project(${PROJECT_NAME})
+endif()
 include(${CMAKE_SOURCE_DIR}/fs.ll.cmake)
 
 set(SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/src/Sample.c"
-    ${SOURCES}
-)
+    ${SOURCES})
 
 # Build system per platform
 if(PLATFORM_NAME STREQUAL "ESP32")
@@ -18,7 +20,6 @@ if(PLATFORM_NAME STREQUAL "ESP32")
 
 elseif(PLATFORM_NAME STREQUAL "Simulator")
     set(CMAKE_C_STANDARD 11)
-    project(${PROJECT_NAME})
     add_executable(${PROJECT_NAME} ${SOURCES})
     include_directories(${INCLUDE_DIRS})
 
@@ -31,7 +32,6 @@ elseif(PLATFORM_NAME STREQUAL "RP2040")
     endif()
     include(${CMAKE_CURRENT_LIST_DIR}/src/Dependency/pico_sdk_import.cmake)
 
-    project(${PROJECT_NAME})
     pico_sdk_init()
     add_executable(${PROJECT_NAME} ${SOURCES})
     include_directories(${INCLUDE_DIRS})
