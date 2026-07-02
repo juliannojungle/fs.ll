@@ -4,7 +4,7 @@
 #include "HAL.h"
 #include "pico/stdio_usb.h"
 
-void Delay(UINT32 milliseconds) {
+void Delay(unsigned int milliseconds) {
     sleep_ms(milliseconds);
 }
 
