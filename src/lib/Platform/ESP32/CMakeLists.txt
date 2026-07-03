@@ -13,5 +13,4 @@ idf_component_register(
         "${PROJ_ROOT}/src/Sample.c"
         ${SOURCES}
     INCLUDE_DIRS ${INCLUDE_DIRS}
-    REQUIRES driver esp_system
-)
+    REQUIRES driver esp_system)

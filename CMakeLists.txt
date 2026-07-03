@@ -4,8 +4,6 @@ set(PROJECT_NAME "fs.ll")
 
 # Build system per platform
 if(PLATFORM_NAME STREQUAL "ESP32")
-    include(${CMAKE_SOURCE_DIR}/fs.ll.cmake)
-    set(SOURCES "${CMAKE_SOURCE_DIR}/src/Sample.c" ${SOURCES})
     # ESP-IDF orchestrates the build: EXTRA_COMPONENT_DIRS adds our component keeping ESP-IDF built-in components.
     set(EXTRA_COMPONENT_DIRS "${CMAKE_SOURCE_DIR}/src/lib/Platform/ESP32")
     include($ENV{IDF_PATH}/tools/cmake/project.cmake)
