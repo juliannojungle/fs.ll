@@ -21,17 +21,43 @@ bool SDCardInit(void);
  * File system helper functions (single SD card on FatFS volume SD_DRIVE)
  * ----------------------------------------------------------------------- */
 
+static const char *ResultMessage(FRESULT result) {
+    switch (result) {
+        case FR_OK:                  return "Succeeded";
+        case FR_DISK_ERR:            return "A hard error occurred in the low level disk I/O layer";
+        case FR_INT_ERR:             return "Assertion failed";
+        case FR_NOT_READY:           return "The physical drive does not work";
+        case FR_NO_FILE:             return "Could not find the file";
+        case FR_NO_PATH:             return "Could not find the path";
+        case FR_INVALID_NAME:        return "The path name format is invalid";
+        case FR_DENIED:              return "Access denied due to a prohibited access or directory full";
+        case FR_EXIST:               return "Access denied due to a prohibited access";
+        case FR_INVALID_OBJECT:      return "The file/directory object is invalid";
+        case FR_WRITE_PROTECTED:     return "The physical drive is write protected";
+        case FR_INVALID_DRIVE:       return "The logical drive number is invalid";
+        case FR_NOT_ENABLED:         return "The volume has no work area";
+        case FR_NO_FILESYSTEM:       return "Could not find a valid FAT volume";
+        case FR_MKFS_ABORTED:        return "The f_mkfs function aborted due to some problem";
+        case FR_TIMEOUT:             return "Could not take control of the volume within defined period";
+        case FR_LOCKED:              return "The operation is rejected according to the file sharing policy";
+        case FR_NOT_ENOUGH_CORE:     return "LFN working buffer could not be allocated";
+        case FR_TOO_MANY_OPEN_FILES: return "Number of open files exceeds the limit";
+        case FR_INVALID_PARAMETER:   return "Given parameter is invalid";
+        default:                     return "Unknown error";
+    }
+}
+
 static FATFS fatfs;
 
 bool MountSdCard(void) {
     if (!SDCardInit()) {
-        printf("SDCardInit failed\n");
+        printf("MountSdCard error: SDCardInit failed\n");
         return false;
     }
 
     FRESULT result = f_mount(&fatfs, SD_DRIVE, 1);
     if (result != FR_OK) {
-        printf("f_mount error: %d\n", result);
+        printf("MountSdCard error: %s\n", ResultMessage(result));
         return false;
     }
     return true;
@@ -40,7 +66,7 @@ bool MountSdCard(void) {
 bool SelectActiveDrive(void) {
     FRESULT result = f_chdrive(SD_DRIVE);
     if (result != FR_OK) {
-        printf("f_chdrive error: %d\n", result);
+        printf("SelectActiveDrive error: %s\n", ResultMessage(result));
         f_unmount(SD_DRIVE);
         return false;
     }
@@ -49,8 +75,8 @@ bool SelectActiveDrive(void) {
 
 bool OpenFile(FIL *file, const char *filename) {
     FRESULT result = f_open(file, filename, FA_OPEN_ALWAYS | FA_READ | FA_WRITE);
-    if (result != FR_OK && result != FR_EXIST) {
-        printf("f_open(%s) error: %d\n", filename, result);
+    if (result != FR_OK) {
+        printf("OpenFile(%s) error: %s\n", filename, ResultMessage(result));
         f_unmount(SD_DRIVE);
         return false;
     }
@@ -60,7 +86,7 @@ bool OpenFile(FIL *file, const char *filename) {
 void CloseFile(FIL *file) {
     FRESULT result = f_close(file);
     if (result != FR_OK) {
-        printf("f_close error: %d\n", result);
+        printf("CloseFile error: %s\n", ResultMessage(result));
     }
 }
 
@@ -74,6 +100,10 @@ unsigned int WriteFile(FIL *file, void *buffer, unsigned int bytesToWrite) {
     UINT bytesWritten;
     f_write(file, buffer, bytesToWrite, &bytesWritten);
     return bytesWritten;
+}
+
+bool PathOrFileExists(const char *path) {
+    return f_stat(path, NULL) == FR_OK;
 }
 
 void CreatePathDirectories(const char *path) {

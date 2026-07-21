@@ -1,5 +1,6 @@
 build/
 sdkconfig
+src/Dependency/fatfs
 
 # Prerequisites
 *.d
