@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.16)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON) # Generate compile_commands.json (consumed by clangd for code intelligence)
 set(PROJECT_NAME "fs.ll")
 
+# In-tree build: this repository is the fs.ll root, so no lookup/download is needed.
+set(FS_LL_PATH "${CMAKE_SOURCE_DIR}")
+
 # Build system per platform
 if(PLATFORM_NAME STREQUAL "ESP32")
     # ESP-IDF orchestrates the build: EXTRA_COMPONENT_DIRS adds our component keeping ESP-IDF built-in components.
