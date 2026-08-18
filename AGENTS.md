@@ -42,8 +42,13 @@ application code written against this library compiles and runs unchanged on the
 the ESP32, and on a Linux simulator. The Simulator is not a separate feature — it is a
 stand-in for the physical card, with `sample/sdcard.img` playing the role of the hardware.
 
-So the single-card, single-volume, no-threading scope is a deliberate design decision, not
-an accidental limitation. A change that widens it is a change of intent, not a fix.
+So the single-card, single-volume scope is a deliberate design decision, not an accidental
+limitation. A change that widens it is a change of intent, not a fix.
+
+Thread safety is a different matter and must not be read as part of that decision. The
+library is **not** thread-safe today, and that is not a settled choice: it is an open item,
+because the main application that will consume fs.ll runs two active threads that both read
+and write the card. See §12 before writing anything that assumes either answer.
 
 ## 2. Repository layout
 
@@ -342,7 +347,8 @@ here so a change to them is a deliberate decision.
   `ff.h`. It compiles only because `ff.h` is not included in that file.
 - Simulator `HALConfig.h` defines SPI pins that nothing reads; only `SD_DISK_IMAGE` is used.
 - `Delay` takes `unsigned int` on Simulator/RP2040 and `uint32_t` on ESP32.
-- The single `static FATFS fatfs` means one mounted volume per program, and no reentrancy.
+- The single `static FATFS fatfs` means one mounted volume per program, and no reentrancy
+  (§12 — this one is an open decision, not a settled trap).
 - `PathOrFileExists` is `f_stat`, which cannot stat the root directory itself.
 - Read buffers are the caller's responsibility, including NUL termination; `src/Sample.c`
   reads `sizeof(buffer) - 1` on purpose.
@@ -378,3 +384,74 @@ a hardware detail is missing, ask rather than deriving it from the code, and nev
 pinout: `HALConfig.h` holds the values in use, and the card-detect polarity there is
 hardware-validated (§3). The occasional stale cross-reference (such as the `AGENTS.md §5`
 comment in `FileSystem.c`, see §5) also comes from that split.
+
+## 12. Open decision: thread safety
+
+**Status: undecided. Do not implement anything for this on your own initiative.**
+
+The library is not thread-safe today, and that is not the result of a design choice — it is
+simply the state the code is in. It matters because the main application that will consume
+fs.ll runs **two active threads**, both reading and writing the card, and in some cases
+wants the same file open for writing in one thread while the other reads it.
+
+### What the code does today
+
+- `FF_FS_REENTRANT` is `0` in `ffconf.h`, so the entire `ff_mutex_*` block of `ffsystem.c`
+  is compiled out. Nothing serializes two tasks calling `f_*` on the same volume.
+- `FF_FS_LOCK` is `0`, so FatFs does not police duplicated open, nor rename/delete of an
+  open object.
+- `FileSystem.c` holds a single `static FATFS fatfs`, and `f_mount` is never thread-safe in
+  FatFs regardless of configuration.
+- `DiskIO.c` keeps mutable statics (`sdState`, `spiHandle`, `busInited`, `diskFile`) and
+  shares one SPI bus. `SdAcquire`/`SdRelease` only toggle chip select; they are not locks.
+- The card-detect ISR (RP2040 and ESP32) writes `sdState.Initialized = false` while the main
+  context may be mid-operation. It is a single `bool` write, benign in practice, but it is a
+  genuine concurrent writer.
+- `FF_USE_LFN` is `2`, i.e. the LFN working buffer lives on the stack. That part is already
+  reentrancy-friendly; the value that would break it is `1` (static buffer).
+- Nothing in the library starts a thread. On the ESP32 the code runs inside the `app_main`
+  task under FreeRTOS and `Delay` is `vTaskDelay`, which yields the CPU — so a context
+  switch during a disk operation is not hypothetical there.
+
+### What FatFs allows
+
+From its own appnote (`src/Dependency/fatfs/documents/doc/appnote.html`, sections
+"Re-entrancy" and "Duplicated File Open"):
+
+- Two tasks on the same volume are not thread-safe by default. `FF_FS_REENTRANT = 1` plus
+  platform implementations of `ff_mutex_create/delete/take/give` makes each filesystem
+  object exclusive, with a `FF_FS_TIMEOUT` after which calls fail with `FR_TIMEOUT`.
+- `f_mount` and `f_mkfs` remain non-thread-safe even then, so mounting has to happen before
+  the threads that use the volume start.
+- Duplicated open of a file is permitted **only when every open is read mode**. Duplicated
+  open with any write mode is always prohibited, and an open file must not be renamed or
+  deleted. Violating this can corrupt data.
+- `FF_FS_LOCK > 0` does not lift that restriction. It makes FatFs reject the violation with
+  `FR_LOCKED` instead of corrupting the volume, and it caps how many open objects are
+  tracked at once (`FR_TOO_MANY_OPEN_FILES` beyond that).
+- The FatFs mutex covers the filesystem object only, not the device layer. The `disk_*`
+  functions must be thread-safe on their own if the API is re-entered.
+
+So the specific case of one thread writing a file while another reads that same file is
+**not supported by FatFs at any configuration**. Reaching it requires an application-level
+design: one shared `FIL` guarded by a mutex (keeping in mind a `FIL` carries a single file
+pointer, so seek and I/O have to be locked together), or a writer/reader handoff, or an
+in-RAM buffer between the two threads.
+
+### If this gets picked up
+
+`FF_FS_REENTRANT` and `FF_FS_LOCK` are set by `src/Dependency/fatfs.ffconf_patch.cmake`
+(§8). The `ff_mutex_*` implementations would become new per-platform code (`ffsystem.c`
+carries samples for several OSs). The `DiskIO.c` statics and the SPI bus would need their
+own protection, since the FatFs mutex does not reach the device layer. Mount would have to
+be pinned to program start, before the worker threads exist.
+
+There is a strong hint that little or nothing needs to change on this side: the parent
+application already has a **singleton `dataManager`** that centralizes card reads and writes
+between its two threads. If every access really funnels through that one object, the
+serialization point already exists above this library, which is precisely the
+application-level design the FatFs rules above call for. That has not been verified from
+here, and it is the first thing to check when the topic is picked up.
+
+Julianno will drive this decision from the parent application, where the agent has the full
+context on how the two threads actually use the card. Ask before changing anything here.
