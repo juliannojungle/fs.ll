@@ -37,8 +37,7 @@ elseif(PLATFORM_NAME STREQUAL "RP2040")
     add_executable(${PROJECT_NAME} ${SOURCES})
     include_directories(${INCLUDE_DIRS})
 
-    target_link_libraries(${PROJECT_NAME} PUBLIC
-        pico_stdlib hardware_spi hardware_gpio hardware_adc hardware_rtc)
+    target_link_libraries(${PROJECT_NAME} PUBLIC ${PLATFORM_LIBRARIES})
 
     pico_enable_stdio_usb(${PROJECT_NAME} 1)  # enable usb output
     pico_enable_stdio_uart(${PROJECT_NAME} 0) # disable uart output

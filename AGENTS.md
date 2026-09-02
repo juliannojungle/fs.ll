@@ -60,16 +60,29 @@ sample/sdcard/                     content that lives inside the disk image
 sample/sdcard.img                  1 MiB FAT image used by the Simulator platform
 src/Sample.c                       usage example / manual test program
 src/lib/FileSystem.{c,h}           the public API (platform independent)
-src/lib/Platform/<Platform>/       one folder per platform, same file names in each:
-    HAL.{c,h}                        Delay(), STDIOInitAll()
-    HALConfig.h                      pin/peripheral/image configuration macros
-    RTC.{c,h}                        RTCInitialize() and FatFs's get_fattime()
+src/lib/FatFsTime.c                FatFs's get_fattime() (platform independent)
+src/lib/Platform/<Platform>/       one folder per platform:
     DiskIO.c                         FatFs disk_* callbacks + SDCardInit()
     CMakeLists.txt                   ESP32 only: ESP-IDF component registration
 src/Dependency/fatfs/              git submodule (a fork, see §8)
 src/Dependency/fatfs.ffconf_patch.cmake   rewrites ffconf.h at configure time
+src/Dependency/hal.ll.cmake        hal.ll's build contract, copied here
+src/Dependency/hal.ll/             resolved through HAL_LL_PATH — NOT a submodule, git-ignored
 src/Dependency/pico_sdk_import.cmake      stock pico-sdk locator, used by the RP2040 build
 ```
+
+### What moved out to hal.ll
+
+This library used to ship its own `HAL.{c,h}`, `HALConfig.h` and a per-platform `RTC.{c,h}`.
+All of it is gone, and the reason is worth keeping: gui.ll shipped the same two filenames with
+the same include guards, so one silently shadowed the other and the build had to delete fs.ll's
+`HAL.c` from the source list to avoid a duplicate-symbol link error.
+
+- `Delay`, `STDIOInitAll` and the whole GPIO/SPI surface now come from hal.ll.
+- `HALConfig.h` is hal.ll's, and it holds the board definition for the SD card *and* the panel.
+- `RTCInitialize()` is hal.ll's. `get_fattime()` stays here, because it is FatFs's contract, but
+  it is now **one platform-independent file** instead of three copies: the per-platform part was
+  only ever *how the clock is read*, and hal.ll's `RTCGetDateTime` does that. Six files became one.
 
 ## 3. Architecture
 
@@ -78,27 +91,38 @@ Three layers, with FatFs sitting in the middle:
 ```
 application (src/Sample.c, or a consumer project)
         |  FileSystem.h
-FileSystem.c  ........................ platform independent
+FileSystem.c, FatFsTime.c  ........... platform independent
         |  f_mount, f_open, f_read, ...
 FatFs (src/Dependency/fatfs)
-        |  disk_initialize/read/write/ioctl, get_fattime
-DiskIO.c, RTC.c, HAL.c  ............. one implementation per platform
+        |  disk_initialize/read/write/ioctl
+DiskIO.c  ............................ one implementation per platform
+        |  SPIWriteReadNByte, DigitalWrite, TicksMs, ...
+hal.ll  .............................. GPIO, SPI, timing, board pinout
         |
 SD card over SPI, or a file-backed image on the Simulator
 ```
 
-Porting to a new platform means adding one folder under `src/lib/Platform/` with the same
-five file names. Nothing else changes: `fs.ll.cmake` derives the sources from
-`PLATFORM_NAME` (§6), so a new folder is picked up automatically.
+**All hardware access goes through hal.ll.** No `gpio_*`, `spi_*`, `sleep_ms` or `vTaskDelay`
+anywhere in this repository — `DiskIO.c` used to call the SDK directly and no longer does. If
+something is missing from hal.ll, it gets added there rather than worked around here. This rule
+is the dev's and holds across the whole collection.
+
+The Simulator's `DiskIO.c` is the exception that proves it: it is backed by a file, not by
+hardware, so it uses POSIX `fopen`/`fread` and needs nothing from hal.ll except `SD_DISK_IMAGE`.
+
+Porting to a new platform means adding one folder under `src/lib/Platform/` with a `DiskIO.c` —
+and a matching platform folder in hal.ll. `fs.ll.cmake` derives the sources from `PLATFORM_NAME`
+(§6), so a new folder is picked up automatically.
 
 The three seams between the layers:
 
 - **`disk_initialize` / `disk_status` / `disk_read` / `disk_write` / `disk_ioctl`** in
   `DiskIO.c` are called by FatFs. All three platforms reject any `pdrv != 0`, i.e. exactly
   one physical drive exists. Sector size is 512 everywhere.
-- **`get_fattime`** in `RTC.c` is called by FatFs to timestamp directory entries. It must
+- **`get_fattime`** in `FatFsTime.c` is called by FatFs to timestamp directory entries. It must
   not be `static`: FatFs declares it `extern` in `ff.h`, and it is defined in exactly one
-  translation unit per program.
+  translation unit per program — which is easier to see now that the file is single and
+  platform-independent.
 - **`SDCardInit`** in `DiskIO.c` is called by `MountSdCard`, and is the only platform
   function the platform-independent layer calls directly. It is forward-declared inside
   `FileSystem.c` rather than exposed in a header (§5).
@@ -107,12 +131,15 @@ Platform differences that matter:
 
 | | Simulator | RP2040 | ESP32 |
 |---|---|---|---|
-| backing store | `fopen` on `SD_DISK_IMAGE` | SD over SPI, bit-level command layer | SD over SPI via `driver/spi_master` |
+| backing store | `fopen` on `SD_DISK_IMAGE` | SD over SPI, bit-level command layer | SD over SPI, same structure |
 | card detect | none | `SD_DETECT_PIN`, LOW = present, pull-up | same, plus a GPIO ISR |
-| `Delay` | `sleep(ms / 1000)` | `sleep_ms` | `vTaskDelay` |
-| `STDIOInitAll` | no-op | `stdio_init_all`, CRLF translation off | no-op (ESP-IDF console does it) |
-| time source | `localtime()`, real time | hardware RTC seeded to 2025-01-01 | system time set to 2025-01-01 UTC |
+| command timeouts | n/a | `TicksMs()` deadlines | iteration counts, not a clock |
 | entry point | `main()` | `main()` | `app_main()` (`ESP_PLATFORM` is defined) |
+
+Timing, GPIO and SPI now behave identically across platforms because they come from hal.ll,
+so they are no longer listed here. Two long-standing bugs went away with that move: the
+Simulator's `Delay` was `sleep(ms / 1000)`, which slept **zero** seconds for anything under a
+second, and `Delay` took `unsigned int` on two platforms and `uint32_t` on the third.
 
 The card-detect polarity (LOW = card present, with a pull-up) is **validated on hardware**,
 not an assumption. Do not "correct" it.
@@ -189,9 +216,9 @@ These are inferred from the existing code. Follow them; do not "modernize" them 
 - **Platform folders expose identical file and function names.** The build selects a
   folder; the code never has `#ifdef PLATFORM_X` branches. The single exception is the
   entry point in `src/Sample.c`, which switches on `ESP_PLATFORM`.
-- **`HALConfig.h` holds hardware/environment configuration only**, as `#ifndef`-guarded
-  macros so a consumer can override them from the build. FatFs-level constants that are
-  identical on every platform (such as `SD_DRIVE "0:"`) stay in `FileSystem.c`.
+- **Hardware configuration lives in hal.ll's `HALConfig.h`**, as `#ifndef`-guarded macros so a
+  consumer can override them from the build. FatFs-level constants that are identical on every
+  platform (such as `SD_DRIVE "0:"`) stay in `FileSystem.c`.
 - **Comments explain *why***, and are used generously where a decision looks arbitrary
   (why `get_fattime` is not static, why `SD_SPI` must match the pins). In English, always
   — see the ground rule at the top of this file.
@@ -342,11 +369,11 @@ here so a change to them is a deliberate decision.
 - `CreatePathDirectories("")` reads `tmp[len - 1]` with `len == 0`, i.e. out of bounds.
 - `CreatePathDirectories` strips a trailing `/`, so for `"a/b/"` the directory `b` is not
   created. It also starts scanning at `tmp + 1`, so a leading `/` is not a separator.
-- Simulator `Delay(500)` sleeps 0 seconds, because it is `sleep(ms / 1000)`.
-- Simulator `RTC.c` declares its own `typedef unsigned int DWORD;` instead of including
-  `ff.h`. It compiles only because `ff.h` is not included in that file.
-- Simulator `HALConfig.h` defines SPI pins that nothing reads; only `SD_DISK_IMAGE` is used.
-- `Delay` takes `unsigned int` on Simulator/RP2040 and `uint32_t` on ESP32.
+
+
+- Simulator `HALConfig.h` (hal.ll's) defines SPI pins that nothing reads; only `SD_DISK_IMAGE`
+  is used on that platform.
+
 - The single `static FATFS fatfs` means one mounted volume per program, and no reentrancy
   (§12 — this one is an open decision, not a settled trap).
 - `PathOrFileExists` is `f_stat`, which cannot stat the root directory itself.
@@ -381,7 +408,7 @@ library. Some material still lives over there and is expected to land here event
 
 Until then, absence of documentation here does not mean the information does not exist. If
 a hardware detail is missing, ask rather than deriving it from the code, and never guess a
-pinout: `HALConfig.h` holds the values in use, and the card-detect polarity there is
+pinout: hal.ll's `HALConfig.h` holds the values in use, and the card-detect polarity there is
 hardware-validated (§3). The occasional stale cross-reference (such as the `AGENTS.md §5`
 comment in `FileSystem.c`, see §5) also comes from that split.
 

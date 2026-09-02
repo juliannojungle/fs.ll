@@ -5,11 +5,7 @@
 
 #include "ff.h"
 #include "diskio.h"
-#include "HALConfig.h"
-
-#include "hardware/spi.h"
-#include "hardware/gpio.h"
-#include "pico/time.h"
+#include "HAL.h"
 
 #include <string.h>
 #include <stdbool.h>
@@ -106,38 +102,37 @@ static unsigned char Crc7(const unsigned char* data, int length) {
 
 static uint8_t SdSpiWrite(uint8_t value) {
     uint8_t rx = SPI_FILL_CHAR;
-    spi_write_read_blocking(SD_SPI, &value, &rx, 1);
+    SPIWriteReadNByte(SD_SPI, &value, &rx, 1);
     return rx;
 }
 
 static void SpiRecvBytes(uint8_t* data, size_t len) {
-    spi_read_blocking(SD_SPI, SPI_FILL_CHAR, data, len);
+    SPIReadNByte(SD_SPI, SPI_FILL_CHAR, data, len);
 }
 
 static void SpiSendBytes(const uint8_t* data, size_t len) {
-    spi_write_blocking(SD_SPI, data, len);
+    SPIWriteNByte(SD_SPI, data, len);
 }
 
 /* Acquire: select card (CS low) + one fill byte to synchronise. */
 static void SdAcquire(void) {
-    gpio_put(SD_SPI_CS, 0);
+    DigitalWrite(SD_SPI_CS, 0);
     SdSpiWrite(SPI_FILL_CHAR);
 }
 
 /* Release: deselect card (CS high) + one fill byte so DO is released. */
 static void SdRelease(void) {
-    gpio_put(SD_SPI_CS, 1);
+    DigitalWrite(SD_SPI_CS, 1);
     SdSpiWrite(SPI_FILL_CHAR);
 }
 
 /* Send 0xFF until the card releases DO (returns non-zero), or timeout. */
 static bool SdWaitReady(int timeoutMs) {
-    absolute_time_t timeout = make_timeout_time_ms(timeoutMs);
+    UINT32 start = TicksMs();
     uint8_t resp;
     do {
         resp = SdSpiWrite(SPI_FILL_CHAR);
-    } while (resp == 0x00 &&
-             absolute_time_diff_us(get_absolute_time(), timeout) > 0);
+    } while (resp == 0x00 && (TicksMs() - start) < (UINT32)timeoutMs);
     return (resp > 0x00);
 }
 
@@ -209,13 +204,13 @@ static uint8_t SdAcmd(uint8_t cmd, uint32_t arg) {
 }
 
 static int SdWaitToken(uint8_t token, int timeoutMs) {
-    absolute_time_t timeout = make_timeout_time_ms(timeoutMs);
+    UINT32 start = TicksMs();
     uint8_t resp;
     do {
         resp = SdSpiWrite(SPI_FILL_CHAR);
         if (resp == token) return 0;
         if (resp != 0xFF)  return -1;  /* error token */
-    } while (absolute_time_diff_us(get_absolute_time(), timeout) > 0);
+    } while ((TicksMs() - start) < (UINT32)timeoutMs);
     return -1;
 }
 
@@ -269,26 +264,26 @@ DSTATUS disk_initialize(BYTE pdrv) {
     if (pdrv != 0) return STA_NOINIT;
 
     /* SPI at low frequency (400 kHz) for init */
-    spi_init(SD_SPI, 400 * 1000);
-    spi_set_format(SD_SPI, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
-    gpio_set_function(SD_SPI_SCLK, GPIO_FUNC_SPI);
-    gpio_set_function(SD_SPI_MOSI, GPIO_FUNC_SPI);
-    gpio_set_function(SD_SPI_MISO, GPIO_FUNC_SPI);
-    gpio_pull_up(SD_SPI_MISO);          /* SD card DO must be pulled up */
-    gpio_init(SD_SPI_CS);
-    gpio_set_dir(SD_SPI_CS, GPIO_OUT);
-    gpio_put(SD_SPI_CS, 1);
+    SPIInit(SD_SPI, 400 * 1000);
+    SPISetFormat(SD_SPI, 8, 0, 0);
+    GPIOSetFunction(SD_SPI_SCLK, GPIO_FUNC_SPI);
+    GPIOSetFunction(SD_SPI_MOSI, GPIO_FUNC_SPI);
+    GPIOSetFunction(SD_SPI_MISO, GPIO_FUNC_SPI);
+    GPIOPullUp(SD_SPI_MISO);            /* SD card DO must be pulled up */
+    GPIOInit(SD_SPI_CS);
+    GPIOSetDir(SD_SPI_CS, GPIO_OUT);
+    DigitalWrite(SD_SPI_CS, 1);
 
     sdState.HighCapacity = false;
 
     /* Initializing sequence: CS HIGH, send 0xFF for at least 1ms (74+ clocks) */
-    gpio_put(SD_SPI_CS, 1);
+    DigitalWrite(SD_SPI_CS, 1);
     uint8_t ones[10];
     memset(ones, 0xFF, sizeof(ones));
-    absolute_time_t initEnd = make_timeout_time_ms(1);
+    UINT32 initStart = TicksMs();
     do {
-        spi_write_blocking(SD_SPI, ones, sizeof(ones));
-    } while (absolute_time_diff_us(get_absolute_time(), initEnd) > 0);
+        SPIWriteNByte(SD_SPI, ones, sizeof(ones));
+    } while ((TicksMs() - initStart) < 1);
 
     /* Acquire — CS stays LOW for the whole init sequence */
     SdAcquire();
@@ -299,7 +294,7 @@ DSTATUS disk_initialize(BYTE pdrv) {
         response = SdCmd(CMD0, 0);
         if (response == R1_IDLE_STATE) break;
         SdRelease();
-        sleep_ms(100);
+        Delay(100);
         SdAcquire();
     }
     if (response != R1_IDLE_STATE) {
@@ -324,11 +319,11 @@ DSTATUS disk_initialize(BYTE pdrv) {
 
     /* ACMD41: SD_SEND_OP_COND — loop until idle bit clears (or timeout) */
     uint32_t acmd41Arg = isV2 ? OCR_HCS_CCS : 0;
-    absolute_time_t acmd41End = make_timeout_time_ms(SD_COMMAND_TIMEOUT_MS);
+    UINT32 acmd41Start = TicksMs();
     do {
         response = SdAcmd(ACMD41, acmd41Arg);
     } while ((response & R1_IDLE_STATE) &&
-             absolute_time_diff_us(get_absolute_time(), acmd41End) > 0);
+             (TicksMs() - acmd41Start) < SD_COMMAND_TIMEOUT_MS);
 
     if (response != 0x00) {
         SdRelease();
@@ -352,7 +347,7 @@ DSTATUS disk_initialize(BYTE pdrv) {
     }
 
     SdRelease();
-    spi_set_baudrate(SD_SPI, SD_SPI_BAUDRATE);
+    SPISetBaudrate(SD_SPI, SD_SPI_BAUDRATE);
 
     sdState.Initialized = true;
     return 0;
@@ -458,8 +453,9 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void* buff) {
 /* Card detect ISR                                                       */
 /*-----------------------------------------------------------------------*/
 
-static void SdCardDetectCallback(uint gpio, uint32_t events) {
+static void SdCardDetectCallback(UINT32 gpio, UINT32 events) {
     static bool busy = false;
+    (void)events;
     if (busy) return;
     busy = true;
     if (gpio == SD_DETECT_PIN) {
@@ -473,16 +469,15 @@ static void SdCardDetectCallback(uint gpio, uint32_t events) {
 /*-----------------------------------------------------------------------*/
 
 bool SDCardInit(void) {
-    gpio_init(SD_DETECT_PIN);
-    gpio_set_dir(SD_DETECT_PIN, GPIO_IN);
-    gpio_pull_up(SD_DETECT_PIN);
-    gpio_set_irq_enabled_with_callback(
+    GPIOInit(SD_DETECT_PIN);
+    GPIOSetDir(SD_DETECT_PIN, GPIO_IN);
+    GPIOPullUp(SD_DETECT_PIN);
+    GPIOSetIRQHandler(
         SD_DETECT_PIN,
-        GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL,
-        true,
-        &SdCardDetectCallback);
+        GPIO_IRQ_EDGE_RISE_MASK | GPIO_IRQ_EDGE_FALL_MASK,
+        SdCardDetectCallback);
 
-    if (gpio_get(SD_DETECT_PIN) != 0) {
+    if (DigitalRead(SD_DETECT_PIN) != 0) {
         return false;  /* no card present */
     }
 

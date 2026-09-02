@@ -9,6 +9,8 @@ endif()
 # In-tree build: this repository is the fs.ll root, so no lookup/download is needed.
 # Set explicitly, since ESP-IDF may process this component in a scope that did not
 # inherit FS_LL_PATH from the root CMakeLists.txt.
+set(PLATFORM_NAME "ESP32")
+
 if(NOT FS_LL_PATH)
     set(FS_LL_PATH "${PROJ_ROOT}")
 endif()
@@ -20,4 +22,4 @@ idf_component_register(
         "${PROJ_ROOT}/src/Sample.c"
         ${SOURCES}
     INCLUDE_DIRS ${INCLUDE_DIRS}
-    REQUIRES driver esp_system)
+    REQUIRES ${PLATFORM_REQUIRES})

@@ -6,13 +6,7 @@
 
 #include "ff.h"
 #include "diskio.h"
-#include "HALConfig.h"
-
-#include "driver/spi_master.h"
-#include "driver/gpio.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_attr.h"
+#include "HAL.h"
 
 #include <string.h>
 #include <stdbool.h>
@@ -109,87 +103,52 @@ static unsigned char Crc7(const unsigned char* data, int length) {
 /* ESP-IDF SPI plumbing (manual CS control via GPIO)                      */
 /*-----------------------------------------------------------------------*/
 
-static spi_device_handle_t spiHandle = NULL;
 static bool busInited = false;
 
 static int SpiBusSetup(void) {
     if (busInited) return 0;
-    spi_bus_config_t busCfg = {
-        .mosi_io_num = SD_SPI_MOSI,
-        .miso_io_num = SD_SPI_MISO,
-        .sclk_io_num = SD_SPI_SCLK,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-        .max_transfer_sz = 512 + 16
-    };
-    if (spi_bus_initialize(SD_SPI, &busCfg, SPI_DMA_CH_AUTO) != ESP_OK) {
-        return -1;
-    }
     busInited = true;
 
     /* CS is driven manually as a plain GPIO so it can be held low across a
      * full command/response/data sequence. */
-    gpio_set_direction((gpio_num_t)SD_SPI_CS, GPIO_MODE_OUTPUT);
-    gpio_set_level((gpio_num_t)SD_SPI_CS, 1);
+    GPIOSetDir(SD_SPI_CS, GPIO_OUT);
+    DigitalWrite(SD_SPI_CS, 1);
     return 0;
 }
 
-/* (Re)configure the SPI device clock. spics_io_num = -1 → manual CS. */
+/* The card must be initialized at 400 kHz or below, then switched to full speed. */
 static int SpiSetClock(uint32_t hz) {
-    if (spiHandle) {
-        spi_bus_remove_device(spiHandle);
-        spiHandle = NULL;
+    if (busInited) {
+        SPISetBaudrate(SD_SPI, hz);
+    } else {
+        SPIInit(SD_SPI, hz);
     }
-    spi_device_interface_config_t devCfg = {
-        .clock_speed_hz = (int)hz,
-        .mode = 0,
-        .spics_io_num = -1,   /* manual CS */
-        .queue_size = 1
-    };
-    return (spi_bus_add_device(SD_SPI, &devCfg, &spiHandle) == ESP_OK) ? 0 : -1;
+    return 0;
 }
 
 static uint8_t SdSpiWrite(uint8_t value) {
     uint8_t rx = SPI_FILL_CHAR;
-    spi_transaction_t t = {
-        .length = 8,
-        .tx_buffer = &value,
-        .rx_buffer = &rx
-    };
-    spi_device_transmit(spiHandle, &t);
+    SPIWriteReadNByte(SD_SPI, &value, &rx, 1);
     return rx;
 }
 
 static void SpiRecvBytes(uint8_t* data, size_t len) {
-    /* SD reads require 0xFF on MOSI while clocking in data. Pre-fill the
-     * buffer with 0xFF and use it as both tx and rx (full-duplex). */
-    memset(data, 0xFF, len);
-    spi_transaction_t t = {
-        .length = len * 8,
-        .tx_buffer = data,
-        .rx_buffer = data
-    };
-    spi_device_transmit(spiHandle, &t);
+    SPIReadNByte(SD_SPI, SPI_FILL_CHAR, data, len);
 }
 
 static void SpiSendBytes(const uint8_t* data, size_t len) {
-    spi_transaction_t t = {
-        .length = len * 8,
-        .tx_buffer = data,
-        .rx_buffer = NULL
-    };
-    spi_device_transmit(spiHandle, &t);
+    SPIWriteNByte(SD_SPI, data, len);
 }
 
 /* Acquire: select card (CS low) + one fill byte to synchronise. */
 static void SdAcquire(void) {
-    gpio_set_level((gpio_num_t)SD_SPI_CS, 0);
+    DigitalWrite(SD_SPI_CS, 0);
     SdSpiWrite(SPI_FILL_CHAR);
 }
 
 /* Release: deselect card (CS high) + one fill byte so DO is released. */
 static void SdRelease(void) {
-    gpio_set_level((gpio_num_t)SD_SPI_CS, 1);
+    DigitalWrite(SD_SPI_CS, 1);
     SdSpiWrite(SPI_FILL_CHAR);
 }
 
@@ -330,7 +289,7 @@ DSTATUS disk_initialize(BYTE pdrv) {
     sdState.HighCapacity = false;
 
     /* Initializing sequence: CS HIGH, send 0xFF (74+ clocks) */
-    gpio_set_level((gpio_num_t)SD_SPI_CS, 1);
+    DigitalWrite(SD_SPI_CS, 1);
     for (int i = 0; i < 16; i++) SdSpiWrite(SPI_FILL_CHAR);
 
     /* Acquire — CS stays LOW for the whole init sequence */
@@ -342,7 +301,7 @@ DSTATUS disk_initialize(BYTE pdrv) {
         response = SdCmd(CMD0, 0);
         if (response == R1_IDLE_STATE) break;
         SdRelease();
-        vTaskDelay(pdMS_TO_TICKS(100));
+        Delay(100);
         SdAcquire();
     }
     if (response != R1_IDLE_STATE) {
@@ -504,8 +463,9 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void* buff) {
 /* Card detect ISR                                                       */
 /*-----------------------------------------------------------------------*/
 
-static void IRAM_ATTR SdCardDetectIsr(void *arg) {
-    (void)arg;
+static void SdCardDetectCallback(UINT32 gpio, UINT32 events) {
+    (void)gpio;
+    (void)events;
     sdState.Initialized = false;  /* force re-init on next mount */
 }
 
@@ -516,18 +476,15 @@ static void IRAM_ATTR SdCardDetectIsr(void *arg) {
 bool SDCardInit(void) {
     /* Card detect pin: input with pull-up, ISR on both edges.
      * Switch is normally open; closes to GND when card is present. */
-    gpio_config_t detectCfg = {
-        .pin_bit_mask = (1ULL << SD_DETECT_PIN),
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_ANYEDGE
-    };
-    gpio_config(&detectCfg);
-    gpio_install_isr_service(0);
-    gpio_isr_handler_add((gpio_num_t)SD_DETECT_PIN, SdCardDetectIsr, NULL);
+    GPIOInit(SD_DETECT_PIN);
+    GPIOSetDir(SD_DETECT_PIN, GPIO_IN);
+    GPIOPullUp(SD_DETECT_PIN);
+    GPIOSetIRQHandler(
+        SD_DETECT_PIN,
+        GPIO_IRQ_EDGE_RISE_MASK | GPIO_IRQ_EDGE_FALL_MASK,
+        SdCardDetectCallback);
 
-    if (gpio_get_level((gpio_num_t)SD_DETECT_PIN) != 0) {
+    if (DigitalRead(SD_DETECT_PIN) != 0) {
         return false;  /* no card present */
     }
 

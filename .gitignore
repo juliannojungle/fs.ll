@@ -1,6 +1,8 @@
 build/
 sdkconfig
 src/Dependency/fatfs
+# hal.ll is not a submodule: fs.ll.cmake resolves/downloads it through HAL_LL_PATH
+src/Dependency/hal.ll
 
 # Prerequisites
 *.d
