@@ -102,6 +102,10 @@ unsigned int WriteFile(FIL *file, void *buffer, unsigned int bytesToWrite) {
     return bytesWritten;
 }
 
+bool TruncateFile(FIL *file) {
+    return f_truncate(file) == FR_OK;
+}
+
 bool PathOrFileExists(const char *path) {
     return f_stat(path, NULL) == FR_OK;
 }
