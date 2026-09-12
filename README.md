@@ -14,3 +14,6 @@ Give access to the file system of **one single physical SD card wired to the har
 the ESP32, and on a Linux simulator. The Simulator is not a separate feature — it is a stand-in for the physical card, with `sample/sdcard.img` playing the role of the hardware.
 
 Currently supports **RP2040** (Raspberry Pi Pico), **ESP32**, and a **Simulator** (native desktop via SDL2) from a single codebase.
+
+---
+<sup>[@juliannojungle](https://github.com/juliannojungle), 2026</sup>
